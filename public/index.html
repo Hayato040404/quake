@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地震情報ビューア</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            font-family: "Arial", sans-serif;
+            background-color: #111;
+            color: #fff;
+        }
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+        #info {
+            position: absolute;
+            top: 50px;
+            right: 50px;
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            width: 300px;
+            border-left: 6px solid #1e90ff;
+        }
+        #info h2 {
+            font-size: 22px;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #fff;
+            font-weight: bold;
+        }
+        .info-item {
+            font-size: 16px;
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        .info-item span {
+            float: right;
+            color: #1e90ff;
+            font-weight: bold;
+        }
+        .error-message {
+            color: red;
+            font-size: 14px;
+        }
+        .epicenter-icon {
+            font-size: 30px;
+            color: red;
+        }
+        .leaflet-container {
+            background: #111;
+        }
+        .intensity-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 9px;
+            font-weight: bold;
+            color: white;
+        }
+        .intensity-7 { background-color: #660000; }
+        .intensity-6-strong { background-color: #990000; }
+        .intensity-6-weak { background-color: #cc0000; }
+        .intensity-5-strong { background-color: #ff0000; }
+        .intensity-5-weak { background-color: #ff3300; }
+        .intensity-4 { background-color: #ff9933; }
+        .intensity-3 { background-color: #ccff33; color: black; }
+        .intensity-2 { background-color: #00cc99; }
+        .intensity-1 { background-color: #1e90ff; }
+        .intensity-0 { background-color: #aaa; color: black; }
+        .intensity-unknown { background-color: black; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="info">
+        <h2>震源・震度情報</h2>
+        <div class="info-item">最大震度: <span id="max-intensity">-</span></div>
+        <div class="info-item">規模: <span id="magnitude">-</span></div>
+        <div class="info-item">震源地: <span id="epicenter">-</span></div>
+        <div class="info-item">発生時刻: <span id="time">-</span></div>
+        <div id="error-message" class="error-message"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const map = L.map('map').setView([35.0, 137.0], 6);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 18,
+                attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            async function fetchEarthquakeData() {
+                try {
+                    const response = await fetch('/api/earthquakes');
+                    if (!response.ok) throw new Error('地震データの取得に失敗しました');
+                    const quakeList = await response.json();
+
+                    // 最新の地震データ
+                    const latestQuake = quakeList.objects[0];
+                    const { MaxInt, Magnitude, Hypocenter, OriginDateTime, EventID } = latestQuake;
+
+                    // パネルに表示
+                    document.getElementById('max-intensity').textContent = MaxInt || '-';
+                    document.getElementById('magnitude').textContent = Magnitude || '不明';
+                    document.getElementById('epicenter').textContent = Hypocenter || '不明';
+                    document.getElementById('time').textContent = new Date(OriginDateTime).toLocaleString('ja-JP');
+
+                    // 詳細データ取得
+                    const detailsResponse = await fetch(`/api/earthquakes/${EventID}/details`);
+                    if (!detailsResponse.ok) throw new Error('詳細データの取得に失敗しました');
+                    const detailsData = await detailsResponse.json();
+
+                    // 震源地データ
+                    const epicenter = detailsData.features.find(feature => feature.properties.class === "epicenter");
+                    const coordinates = epicenter.geometry.coordinates;
+
+                    // 地図に震源地を追加
+                    L.marker([coordinates[1], coordinates[0]], {
+                        icon: L.divIcon({
+                            className: 'epicenter-icon',
+                            html: '❌️',
+                            iconSize: [30, 30]
+                        })
+                    }).addTo(map);
+                    map.setView([coordinates[1], coordinates[0]], 8);
+
+                    // 観測点データを描画
+                    detailsData.features.forEach(feature => {
+                        if (feature.properties.class === "epicenter") return; // 震源地はスキップ
+
+                        const intensity = feature.properties.class;
+                        const [lon, lat] = feature.geometry.coordinates;
+
+                        L.marker([lat, lon], {
+                            icon: L.divIcon({
+                                className: `intensity-icon intensity-${intensity.replace("弱", "-weak").replace("強", "-strong")}`,
+                                html: intensity,
+                                iconSize: [25, 25]
+                            })
+                        }).addTo(map);
+                    });
+                } catch (error) {
+                    console.error(error);
+                    document.getElementById('error-message').textContent = "データ取得中にエラーが発生しました。";
+                }
+            }
+
+            fetchEarthquakeData();
+        });
+    </script>
+</body>
+</html>
